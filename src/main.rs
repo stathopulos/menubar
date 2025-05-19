@@ -1,14 +1,17 @@
 #![deny(unsafe_op_in_unsafe_fn)]
+use jiff::Timestamp;
 use std::cell::OnceCell;
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu, NSMenuDelegate,
     NSSquareStatusItemLength, NSStatusBar, NSStatusItem,
 };
-use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, ns_string};
+use objc2_foundation::{
+    MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSString, ns_string,
+};
 
 #[derive(Debug, Default)]
 struct AppDelegateIvars {
@@ -40,15 +43,22 @@ define_class!(
                 .unwrap();
             // let app = NSApplication::sharedApplication(mtm); // this works too
 
+            // Initialize item on the status bar
             let status_bar = unsafe { NSStatusBar::systemStatusBar() };
-
-            // Initialize status_item
             let status_item = unsafe { status_bar.statusItemWithLength(NSSquareStatusItemLength) };
-            unsafe {status_item.button(mtm).unwrap().setTitle(ns_string!("🪿"))}
 
-            // Setup status_item with a menu
+            // Give status item a button
+            let status_button = unsafe { status_item.button(mtm).unwrap() };
+            unsafe { status_button.setTitle(ns_string!("🪿")) }
+
+            // Setup a menu
             let menu = NSMenu::new(mtm);
             unsafe {
+                menu.addItemWithTitle_action_keyEquivalent(
+                    ns_string!("Status"),
+                    None,
+                    ns_string!(""),
+                );
                 menu.addItemWithTitle_action_keyEquivalent(
                     ns_string!("Send a Goose"),
                     Some(sel!(order_goose)),
@@ -65,9 +75,13 @@ define_class!(
                     ns_string!("q"),
                 );
             }
-            unsafe {status_item.setMenu(Some(&menu))};
+            let proto: &ProtocolObject<dyn NSMenuDelegate> = ProtocolObject::from_ref(self);
+            unsafe { menu.setDelegate(Some(proto))}
 
-            // Store the statusbar in the delegate.
+            // Give our menu to status item
+            unsafe { status_item.setMenu(Some(&menu)) }
+
+            // Store the status item in the delegate vars.
             self.ivars().status_item.set(status_item).unwrap();
 
             app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
@@ -76,6 +90,13 @@ define_class!(
             // Required when launching unbundled (as is done with Cargo).
             #[allow(deprecated)]
             app.activateIgnoringOtherApps(true);
+        }
+    }
+    unsafe impl NSMenuDelegate for Delegate {
+        #[unsafe(method(menuWillOpen:))]
+        fn menu_will_open(&self, menu: &NSMenu) {
+            let syst = Timestamp::now().to_string();
+            unsafe { menu.itemAtIndex(0).unwrap().setTitle(&NSString::from_str(&syst)) }
         }
     }
     impl Delegate {
